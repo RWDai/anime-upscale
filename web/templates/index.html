@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>动画超分队列</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>动画超分</h1>
+      <p>StarSample V2 Lite · 单 GPU 任务队列</p>
+    </div>
+    <div class="service-state" id="serviceState" aria-live="polite">
+      <span class="state-dot"></span><span>正在连接</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="stats" aria-label="任务统计">
+      <div><span>运行中</span><strong id="runningCount">0</strong></div>
+      <div><span>等待中</span><strong id="queuedCount">0</strong></div>
+      <div><span>已完成</span><strong id="completedCount">0</strong></div>
+      <div><span>失败</span><strong id="failedCount">0</strong></div>
+      <div class="gpu-stat"><span>GPU</span><strong id="gpuStatus">--</strong></div>
+    </section>
+
+    <section class="workspace">
+      <form class="new-job" id="jobForm">
+        <div class="section-heading">
+          <div>
+            <h2>新建任务</h2>
+            <p>源文件只读，输出不会覆盖已有文件。</p>
+          </div>
+        </div>
+
+        <label for="inputPath">输入文件或目录</label>
+        <div class="path-control">
+          <input id="inputPath" name="input_path" type="text" placeholder="相对于媒体根目录，例如 tv/儿童/蓝色小考拉" required autocomplete="off">
+          <button class="secondary" id="browseButton" type="button">浏览</button>
+        </div>
+
+        <div class="form-grid">
+          <div>
+            <label for="outputSubdir">输出子目录</label>
+            <input id="outputSubdir" name="output_subdir" type="text" value="upscaled" required>
+            <small>在配置的输出根目录下创建</small>
+          </div>
+          <div>
+            <label for="cq">编码质量（CQ）</label>
+            <input id="cq" name="cq" type="number" min="0" max="51" step="1" value="18" required>
+            <small>数值越低画质越高，文件越大</small>
+          </div>
+        </div>
+
+        <label class="check-row">
+          <input id="recursive" name="recursive" type="checkbox" checked>
+          <span>递归处理目录中的视频</span>
+        </label>
+
+        <div class="submit-row">
+          <span id="formMessage" role="status"></span>
+          <button class="primary" id="submitJob" type="submit">加入队列</button>
+        </div>
+      </form>
+
+      <section class="queue">
+        <div class="section-heading">
+          <div>
+            <h2>任务队列</h2>
+            <p id="lastUpdated">等待首次刷新</p>
+          </div>
+          <button class="secondary compact" id="refreshButton" type="button">刷新</button>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>任务</th>
+                <th>状态</th>
+                <th>进度</th>
+                <th>速度 / 剩余</th>
+                <th class="actions-column">操作</th>
+              </tr>
+            </thead>
+            <tbody id="jobsBody"></tbody>
+          </table>
+          <div class="empty-state" id="emptyState">还没有任务</div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="browserDialog" class="dialog browser-dialog">
+    <form method="dialog" class="dialog-head">
+      <div>
+        <h2>选择输入</h2>
+        <p id="browserPath">媒体根目录</p>
+      </div>
+      <button class="icon-button" value="cancel" aria-label="关闭" title="关闭">×</button>
+    </form>
+    <div class="browser-toolbar">
+      <button class="secondary compact" id="browserUp" type="button">上一级</button>
+      <button class="secondary compact" id="selectFolder" type="button">选择当前目录</button>
+    </div>
+    <div class="browser-list" id="browserList" aria-live="polite"></div>
+  </dialog>
+
+  <dialog id="detailDialog" class="dialog detail-dialog">
+    <form method="dialog" class="dialog-head">
+      <div>
+        <h2 id="detailTitle">任务详情</h2>
+        <p id="detailMeta"></p>
+      </div>
+      <button class="icon-button" value="cancel" aria-label="关闭" title="关闭">×</button>
+    </form>
+    <dl class="detail-grid" id="detailGrid"></dl>
+    <div class="log-heading">
+      <h3>运行日志</h3>
+      <button class="secondary compact" id="detailRefresh" type="button">刷新</button>
+    </div>
+    <pre id="detailLog">暂无日志</pre>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

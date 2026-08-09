@@ -1,0 +1,26 @@
+services:
+  upscale-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    image: anime-upscale-web:local
+    gpus: all
+    init: true
+    restart: unless-stopped
+    shm_size: 2gb
+    stop_grace_period: 30s
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+      MEDIA_ROOT: /mnt/user/data
+      OUTPUT_ROOT: /output
+      DATA_ROOT: /data
+      MODEL_PATH: /models/2x-StarSample-V2-Lite.safetensors
+      UPSCALE_TILE: "256"
+      UPSCALE_CONTEXT: "32"
+    ports:
+      - "8787:8787"
+    volumes:
+      - /mnt/user/data:/mnt/user/data:ro
+      - ./output:/output
+      - ./data:/data
+      - ./models:/models:ro

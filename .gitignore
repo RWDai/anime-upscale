@@ -1,0 +1,18 @@
+models/
+models-vsr/
+docker/
+scripts/
+test-clips/
+test-inputs/
+test-results/
+test-results-vsr/
+output/
+data/
+__pycache__/
+*.py[cod]
+*.orig
+.env
+
+# Historical experiment-only container definitions.
+/Dockerfile
+/compose.yaml
