@@ -22,6 +22,7 @@ services:
       - "8787:8787"
     volumes:
       - /mnt/user/data:/mnt/user/data:ro
+      - ./web:/app/web:ro
       - ./output:/output
       - ./data:/data
       - ./models:/models:ro

@@ -90,6 +90,14 @@ class Database:
             for input_path, output_path in paths
         ]
         with self.connect() as connection:
+            # Terminal jobs do not reserve an output path once its file was removed.
+            connection.executemany(
+                """
+                DELETE FROM jobs
+                WHERE output_path=? AND status IN ('completed', 'failed', 'cancelled')
+                """,
+                [(str(output_path),) for _, output_path in paths],
+            )
             connection.executemany(
                 """
                 INSERT INTO jobs (
@@ -104,7 +112,11 @@ class Database:
     def output_is_registered(self, output_path: Path) -> bool:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT 1 FROM jobs WHERE output_path=? LIMIT 1",
+                """
+                SELECT 1 FROM jobs
+                WHERE output_path=? AND status IN ('queued', 'running')
+                LIMIT 1
+                """,
                 (str(output_path),),
             ).fetchone()
         return row is not None
