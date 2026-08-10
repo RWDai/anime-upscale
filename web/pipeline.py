@@ -231,9 +231,10 @@ class AnimeSRRuntime:
         image = (
             out[:, :, : height * 4, : width * 4]
             .squeeze(0)
-            .clamp_(0, 1)
-            .mul_(255)
-            .round_()
+            # Keep recurrent feedback in floating-point 0..1 form.
+            .clamp(0, 1)
+            .mul(255)
+            .round()
             .to(dtype=torch.uint8)
             .permute(1, 2, 0)
             .contiguous()
