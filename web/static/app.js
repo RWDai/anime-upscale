@@ -46,7 +46,6 @@ function escapeHtml(value) {
 
 function progressOf(job) {
   let progress = Number(job.progress ?? job.percent ?? 0);
-  if (progress > 0 && progress <= 1) progress *= 100;
   return Math.max(0, Math.min(100, Number.isFinite(progress) ? progress : 0));
 }
 
