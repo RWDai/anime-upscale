@@ -6,6 +6,10 @@ const statusNames = {
   queued: "等待中", pending: "等待中", running: "运行中", processing: "运行中",
   completed: "已完成", done: "已完成", failed: "失败", cancelled: "已取消", canceled: "已取消"
 };
+const modelNames = {
+  starsample_v2_lite: "StarSample V2 Lite",
+  animesr_v2: "AnimeSR v2"
+};
 
 async function api(url, options = {}) {
   const response = await fetch(url, {
@@ -82,7 +86,7 @@ function renderJobs() {
       ? `<button class="danger" data-action="cancel" data-id="${escapeHtml(id)}">取消</button>`
       : canRetry ? `<button class="secondary" data-action="retry" data-id="${escapeHtml(id)}">重试</button>` : "";
     return `<tr data-id="${escapeHtml(id)}" tabindex="0">
-      <td><div class="job-name" title="${escapeHtml(jobPath(job))}">${escapeHtml(fileName(jobPath(job)))}</div><div class="job-path">#${escapeHtml(id)} · ${escapeHtml(jobPath(job))}</div></td>
+      <td><div class="job-name" title="${escapeHtml(jobPath(job))}">${escapeHtml(fileName(jobPath(job)))}</div><div class="job-path">#${escapeHtml(id)} · ${escapeHtml(modelNames[job.model] || job.model || modelNames.starsample_v2_lite)} · ${escapeHtml(jobPath(job))}</div></td>
       <td><span class="badge ${escapeHtml(status)}">${escapeHtml(statusNames[status] || status)}</span></td>
       <td><div class="progress"><div class="progress-track"><div class="progress-bar" style="width:${progress}%"></div></div><div class="progress-label">${progress.toFixed(1)}%${job.current_frame ? ` · ${escapeHtml(job.current_frame)} 帧` : ""}</div></div></td>
       <td><div class="rate"><div>${escapeHtml(rateText)}</div><div>剩余 ${escapeHtml(formatDuration(eta))}</div></div></td>
@@ -138,7 +142,8 @@ async function submitJob(event) {
         input_path: $("#inputPath").value.trim(),
         output_subdir: $("#outputSubdir").value.trim(),
         recursive: $("#recursive").checked,
-        cq: Number($("#cq").value)
+        cq: Number($("#cq").value),
+        model: document.querySelector('input[name="model"]:checked').value
       })
     });
     toast("任务已加入队列");
@@ -213,6 +218,7 @@ async function loadDetail(id, showErrors = true) {
     $("#detailMeta").textContent = `任务 #${id} · ${statusNames[status] || status}`;
     const details = [
       ["输入", jobPath(job)], ["输出", job.output_path || job.output || "--"],
+      ["模型", modelNames[job.model] || job.model || modelNames.starsample_v2_lite],
       ["进度", `${progressOf(job).toFixed(1)}%`], ["编码质量", job.cq ?? "--"],
       ["已处理帧", job.current_frame ?? job.processed_frames ?? "--"], ["总帧数", job.total_frames ?? "--"],
       ["开始时间", job.started_at || "--"], ["结束时间", job.finished_at || job.completed_at || "--"]

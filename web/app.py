@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import gc
 import sqlite3
 import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 import torch
 from fastapi import FastAPI, HTTPException, Query
@@ -14,10 +16,17 @@ from pydantic import BaseModel, Field
 
 from .config import settings
 from .database import Database
-from .pipeline import Cancelled, StarSampleRuntime, run_pipeline
+from .pipeline import AnimeSRRuntime, Cancelled, StarSampleRuntime, run_pipeline
 
 
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".ts", ".m2ts", ".webm"}
+MODEL_OPTIONS = {
+    "starsample_v2_lite": {
+        "label": "StarSample V2 Lite",
+        "suffix": "starsample-2x",
+    },
+    "animesr_v2": {"label": "AnimeSR v2", "suffix": "animesr-v2-2x"},
+}
 WEB_ROOT = Path(__file__).parent
 database = Database(settings.database_path)
 
@@ -46,7 +55,8 @@ class Worker:
     def __init__(self):
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
-        self.runtime: StarSampleRuntime | None = None
+        self.runtime: StarSampleRuntime | AnimeSRRuntime | None = None
+        self.runtime_name: str | None = None
         self.cancel_events: dict[str, threading.Event] = {}
         self.lock = threading.Lock()
         self.current_job_id: str | None = None
@@ -78,6 +88,25 @@ class Worker:
         with (settings.log_root / f"{job_id}.log").open("a", encoding="utf-8") as stream:
             stream.write(f"[{timestamp}] {message}\n")
 
+    def get_runtime(
+        self, model: str, job_id: str
+    ) -> StarSampleRuntime | AnimeSRRuntime:
+        if self.runtime is not None and self.runtime_name == model:
+            return self.runtime
+        if self.runtime is not None:
+            self.append_log(job_id, f"正在切换模型：{MODEL_OPTIONS[model]['label']}")
+            self.runtime = None
+            self.runtime_name = None
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        runtime_class = AnimeSRRuntime if model == "animesr_v2" else StarSampleRuntime
+        self.runtime = runtime_class(
+            settings, lambda message: self.append_log(job_id, message)
+        )
+        self.runtime_name = model
+        return self.runtime
+
     def loop(self) -> None:
         while not self.stop_event.is_set():
             job = database.claim_next()
@@ -90,13 +119,14 @@ class Worker:
                 self.cancel_events[job_id] = cancel_event
                 self.current_job_id = job_id
             try:
-                if self.runtime is None:
-                    self.runtime = StarSampleRuntime(
-                        settings, lambda message: self.append_log(job_id, message)
-                    )
+                model = job.get("model") or "starsample_v2_lite"
+                if model not in MODEL_OPTIONS:
+                    raise RuntimeError(f"任务使用了未知模型：{model}")
+                self.append_log(job_id, f"任务模型：{MODEL_OPTIONS[model]['label']}")
+                runtime = self.get_runtime(model, job_id)
                 run_pipeline(
                     job,
-                    self.runtime,
+                    runtime,
                     settings,
                     cancel_event,
                     lambda frame, total, fps, eta: database.update_progress(
@@ -139,6 +169,7 @@ class CreateJobs(BaseModel):
     output_subdir: str = ""
     recursive: bool = True
     cq: int = Field(default=18, ge=0, le=51)
+    model: Literal["starsample_v2_lite", "animesr_v2"] = "starsample_v2_lite"
 
 
 @app.get("/")
@@ -155,6 +186,18 @@ def status():
     return {
         "model": settings.model_path.name,
         "model_ready": settings.model_path.is_file(),
+        "models": [
+            {
+                "id": "starsample_v2_lite",
+                "label": MODEL_OPTIONS["starsample_v2_lite"]["label"],
+                "ready": settings.model_path.is_file(),
+            },
+            {
+                "id": "animesr_v2",
+                "label": MODEL_OPTIONS["animesr_v2"]["label"],
+                "ready": settings.animesr_model_path.is_file(),
+            },
+        ],
         "cuda_ready": torch.cuda.is_available(),
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "current_job_id": worker.current_job_id,
@@ -196,6 +239,15 @@ def browse(path: str = Query(default="")):
 
 @app.post("/api/jobs")
 def create_jobs(request: CreateJobs):
+    selected_model_path = (
+        settings.animesr_model_path
+        if request.model == "animesr_v2"
+        else settings.model_path
+    )
+    if not selected_model_path.is_file():
+        raise HTTPException(
+            503, f"所选模型尚未就绪：{MODEL_OPTIONS[request.model]['label']}"
+        )
     selected = inside(settings.media_root, request.input_path)
     output_directory = inside(settings.output_root, request.output_subdir)
     if not selected.exists():
@@ -220,7 +272,8 @@ def create_jobs(request: CreateJobs):
     for source in files:
         relative_parent = source.parent.relative_to(base) if selected.is_dir() else Path()
         target_dir = output_directory / relative_parent
-        target = target_dir / f"{source.stem}.starsample-2x.mkv"
+        suffix = MODEL_OPTIONS[request.model]["suffix"]
+        target = target_dir / f"{source.stem}.{suffix}.mkv"
         planned.append((source, target))
 
     targets = [target for _, target in planned]
@@ -233,7 +286,7 @@ def create_jobs(request: CreateJobs):
             raise HTTPException(409, f"输出目标已登记：{target}")
 
     try:
-        created = database.create_many(planned, request.cq)
+        created = database.create_many(planned, request.cq, request.model)
     except sqlite3.IntegrityError as error:
         raise HTTPException(409, "输出目标已被其他任务登记") from error
     return {"created": len(created), "jobs": created}

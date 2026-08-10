@@ -15,6 +15,7 @@ services:
       OUTPUT_ROOT: /output
       DATA_ROOT: /data
       MODEL_PATH: /models/2x-StarSample-V2-Lite.safetensors
+      ANIMESR_MODEL_PATH: /models/AnimeSR_v2.pth
       UPSCALE_TILE: "256"
       UPSCALE_CONTEXT: "32"
     ports:

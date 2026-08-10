@@ -1,8 +1,8 @@
 # Anime Upscale Web
 
-一个面向单机、单 GPU 的轻量视频超分任务界面。当前生产模型固定为
-StarSample V2 Lite，浏览器负责创建、取消和重试任务，容器内的单个 Worker
-依次完成 FFmpeg 解码、逐帧超分、HEVC Main10 编码和音字幕封装。
+一个面向单机、单 GPU 的轻量视频超分任务界面。创建任务时可以选择
+StarSample V2 Lite 或 AnimeSR v2，浏览器负责创建、取消和重试任务，容器内
+的单个 Worker 依次完成 FFmpeg 解码、超分、HEVC Main10 编码和音字幕封装。
 
 ## 前置条件
 
@@ -13,26 +13,29 @@ StarSample V2 Lite，浏览器负责创建、取消和重试任务，容器内�
 
 ## 模型权重
 
-将模型放到：
+将两个模型放到：
 
 ```text
 models/2x-StarSample-V2-Lite.safetensors
+models/AnimeSR_v2.pth
 ```
 
 预期 SHA256：
 
 ```text
-4008dfc72295bb48574a389bf4bd4e55d9af3766f34b6b68cc7bc0c78bd22a0b
+4008dfc72295bb48574a389bf4bd4e55d9af3766f34b6b68cc7bc0c78bd22a0b  2x-StarSample-V2-Lite.safetensors
+d0f29c8966b53718828bd424bbdc306e7ff0cbf6350beadaf8b5b2500b108548  AnimeSR_v2.pth
 ```
 
 可在启动前校验：
 
 ```bash
-sha256sum models/2x-StarSample-V2-Lite.safetensors
+sha256sum models/2x-StarSample-V2-Lite.safetensors models/AnimeSR_v2.pth
 ```
 
-模型权重不会提交到 Git；`.gitignore` 已忽略整个 `models/` 目录。发布到
-GitHub 时只提交代码，使用者需要自行提供并校验权重。
+模型权重不会提交到 Git；`.gitignore` 已忽略整个 `models/` 目录。AnimeSR
+的 GPL-3.0 网络结构以精简推理模块随项目提供，许可证见
+`LICENSES/AnimeSR-GPL-3.0.txt`；权重仍需使用者自行提供并校验。
 
 ## 启动
 
@@ -77,6 +80,9 @@ PyTorch CUDA 推理和 NVENC 编码同时可用。
 ## 当前行为
 
 - Uvicorn 固定为一个进程，Tesla P4 同一时间只运行一个超分任务。
+- 每个任务独立保存模型选择；切换模型时 Worker 会释放上一模型的 GPU 显存。
+- StarSample V2 Lite 逐帧处理，画面更克制；AnimeSR v2 使用前、中、后三帧及
+  递归状态，细节更锐利。AnimeSR 内部 4x 推理后以 Lanczos 输出 2x。
 - 支持选择单个视频或递归加入一个目录，输入文件不会被修改。
 - 输出固定写到 `/output`，已有目标不会覆盖，任务失败不会冒充为完成文件。
 - 音轨、字幕、章节和附件会尽可能从源文件直接复制，默认 MKV 输出最适合

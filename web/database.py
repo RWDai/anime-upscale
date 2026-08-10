@@ -55,6 +55,15 @@ class Database:
                 "CREATE UNIQUE INDEX IF NOT EXISTS jobs_output_path_unique "
                 "ON jobs(output_path)"
             )
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(jobs)").fetchall()
+            }
+            if "model" not in columns:
+                connection.execute(
+                    "ALTER TABLE jobs ADD COLUMN model TEXT NOT NULL "
+                    "DEFAULT 'starsample_v2_lite'"
+                )
 
     def recover_interrupted(self) -> None:
         with self.connect() as connection:
@@ -68,22 +77,24 @@ class Database:
                 (now(),),
             )
 
-    def create(self, input_path: Path, output_path: Path, cq: int) -> dict[str, Any]:
-        return self.create_many([(input_path, output_path)], cq)[0]
+    def create(
+        self, input_path: Path, output_path: Path, cq: int, model: str
+    ) -> dict[str, Any]:
+        return self.create_many([(input_path, output_path)], cq, model)[0]
 
     def create_many(
-        self, paths: list[tuple[Path, Path]], cq: int
+        self, paths: list[tuple[Path, Path]], cq: int, model: str
     ) -> list[dict[str, Any]]:
         rows = [
-            (uuid.uuid4().hex[:12], str(input_path), str(output_path), cq, now())
+            (uuid.uuid4().hex[:12], str(input_path), str(output_path), cq, model, now())
             for input_path, output_path in paths
         ]
         with self.connect() as connection:
             connection.executemany(
                 """
                 INSERT INTO jobs (
-                    id, input_path, output_path, status, cq, created_at
-                ) VALUES (?, ?, ?, 'queued', ?, ?)
+                    id, input_path, output_path, status, cq, model, created_at
+                ) VALUES (?, ?, ?, 'queued', ?, ?, ?)
                 """,
                 rows,
             )

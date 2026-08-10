@@ -10,7 +10,7 @@
   <header class="topbar">
     <div>
       <h1>动画超分</h1>
-      <p>StarSample V2 Lite · 单 GPU 任务队列</p>
+      <p>StarSample V2 Lite / AnimeSR v2 · 单 GPU 任务队列</p>
     </div>
     <div class="service-state" id="serviceState" aria-live="polite">
       <span class="state-dot"></span><span>正在连接</span>
@@ -40,6 +40,20 @@
           <input id="inputPath" name="input_path" type="text" placeholder="相对于媒体根目录，例如 tv/儿童/蓝色小考拉" required autocomplete="off">
           <button class="secondary" id="browseButton" type="button">浏览</button>
         </div>
+
+        <fieldset class="model-fieldset">
+          <legend>超分模型</legend>
+          <div class="model-selector">
+            <label>
+              <input type="radio" name="model" value="starsample_v2_lite" checked>
+              <span><strong>StarSample V2 Lite</strong><small>画面稳定，细节更克制</small></span>
+            </label>
+            <label>
+              <input type="radio" name="model" value="animesr_v2">
+              <span><strong>AnimeSR v2</strong><small>结合前后帧，细节更锐利</small></span>
+            </label>
+          </div>
+        </fieldset>
 
         <div class="form-grid">
           <div>

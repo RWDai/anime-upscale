@@ -9,8 +9,10 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Callable
 
+import cv2
 import numpy as np
 import torch
+import torch.nn.functional as functional
 from spandrel import MAIN_REGISTRY, ModelLoader
 from spandrel_extra_arches import EXTRA_REGISTRY
 
@@ -188,6 +190,103 @@ class StarSampleRuntime:
         return output
 
 
+class AnimeSRRuntime:
+    def __init__(self, settings: Settings, log: Callable[[str], None]):
+        if not torch.cuda.is_available():
+            raise RuntimeError("容器内未检测到 CUDA")
+        if not settings.animesr_model_path.is_file():
+            raise RuntimeError(f"模型文件不存在：{settings.animesr_model_path}")
+
+        from .animesr_arch import AnimeSRV2
+
+        self.device = torch.device("cuda:0")
+        model = AnimeSRV2(num_feat=64, num_block=(5, 3, 2), netscale=4)
+        checkpoint = torch.load(
+            settings.animesr_model_path, map_location="cpu", weights_only=True
+        )
+        model.load_state_dict(checkpoint, strict=True)
+        self.model = model.eval().to(self.device, dtype=torch.float32)
+        log(
+            f"模型已加载：{settings.animesr_model_path.name}，FP32，"
+            "三帧时序输入，4x 网络输出后 Lanczos 缩放至 2x"
+        )
+
+    def _to_tensor(self, frame: bytes, width: int, height: int) -> torch.Tensor:
+        array = np.frombuffer(frame, dtype=np.uint8).reshape(height, width, 3).copy()
+        image = (
+            torch.from_numpy(array)
+            .permute(2, 0, 1)
+            .unsqueeze(0)
+            .to(device=self.device, dtype=torch.float32)
+            / 255.0
+        )
+        pad_right = (-width) % 4
+        pad_bottom = (-height) % 4
+        if pad_right or pad_bottom:
+            image = functional.pad(image, (0, pad_right, 0, pad_bottom), mode="replicate")
+        return image
+
+    @staticmethod
+    def _to_output(out: torch.Tensor, width: int, height: int) -> bytes:
+        image = (
+            out[:, :, : height * 4, : width * 4]
+            .squeeze(0)
+            .clamp_(0, 1)
+            .mul_(255)
+            .round_()
+            .to(dtype=torch.uint8)
+            .permute(1, 2, 0)
+            .contiguous()
+            .cpu()
+            .numpy()
+        )
+        image = cv2.resize(image, (width * 2, height * 2), interpolation=cv2.INTER_LANCZOS4)
+        return np.ascontiguousarray(image).tobytes()
+
+    def upscale_sequence(
+        self,
+        stream,
+        frame_size: int,
+        width: int,
+        height: int,
+        cancel_event: threading.Event,
+    ):
+        first = read_frame(stream, frame_size)
+        if not first:
+            return
+        if len(first) != frame_size:
+            raise RuntimeError("FFmpeg 返回了不完整的视频帧")
+
+        prev = self._to_tensor(first, width, height)
+        cur = prev
+        following = read_frame(stream, frame_size)
+        if following and len(following) != frame_size:
+            raise RuntimeError("FFmpeg 返回了不完整的视频帧")
+        end = not following
+        nxt = self._to_tensor(following, width, height) if following else cur
+        padded_height, padded_width = cur.shape[-2:]
+        state = cur.new_zeros(1, 64, padded_height, padded_width)
+        out = cur.new_zeros(1, 3, padded_height * 4, padded_width * 4)
+
+        with torch.inference_mode():
+            while True:
+                if cancel_event.is_set():
+                    raise Cancelled()
+                out, state = self.model.cell(torch.cat((prev, cur, nxt), dim=1), out, state)
+                yield self._to_output(out, width, height)
+                if end:
+                    break
+                prev, cur = cur, nxt
+                following = read_frame(stream, frame_size)
+                if following and len(following) != frame_size:
+                    raise RuntimeError("FFmpeg 返回了不完整的视频帧")
+                if following:
+                    nxt = self._to_tensor(following, width, height)
+                else:
+                    nxt = cur
+                    end = True
+
+
 def terminate(process: subprocess.Popen | None) -> None:
     if process is None or process.poll() is not None:
         return
@@ -209,9 +308,33 @@ def read_frame(stream, size: int) -> bytes:
     return bytes(chunks)
 
 
+def upscale_frames(
+    runtime: StarSampleRuntime | AnimeSRRuntime,
+    stream,
+    frame_size: int,
+    width: int,
+    height: int,
+    cancel_event: threading.Event,
+):
+    if isinstance(runtime, AnimeSRRuntime):
+        yield from runtime.upscale_sequence(
+            stream, frame_size, width, height, cancel_event
+        )
+        return
+    while True:
+        if cancel_event.is_set():
+            raise Cancelled()
+        frame = read_frame(stream, frame_size)
+        if not frame:
+            return
+        if len(frame) != frame_size:
+            raise RuntimeError("FFmpeg 返回了不完整的视频帧")
+        yield runtime.upscale(frame, width, height)
+
+
 def run_pipeline(
     job: dict,
-    runtime: StarSampleRuntime,
+    runtime: StarSampleRuntime | AnimeSRRuntime,
     settings: Settings,
     cancel_event: threading.Event,
     progress: Callable[[int, int, float, int | None], None],
@@ -315,15 +438,9 @@ def run_pipeline(
                 stderr=process_log,
             )
 
-            while True:
-                if cancel_event.is_set():
-                    raise Cancelled()
-                frame = read_frame(decoder.stdout, frame_size)
-                if not frame:
-                    break
-                if len(frame) != frame_size:
-                    raise RuntimeError("FFmpeg 返回了不完整的视频帧")
-                result = runtime.upscale(frame, width, height)
+            for result in upscale_frames(
+                runtime, decoder.stdout, frame_size, width, height, cancel_event
+            ):
                 try:
                     encoder.stdin.write(result)
                 except BrokenPipeError as error:

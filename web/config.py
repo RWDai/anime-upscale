@@ -11,6 +11,9 @@ class Settings:
     model_path: Path = Path(
         os.environ.get("MODEL_PATH", "/models/2x-StarSample-V2-Lite.safetensors")
     )
+    animesr_model_path: Path = Path(
+        os.environ.get("ANIMESR_MODEL_PATH", "/models/AnimeSR_v2.pth")
+    )
     tile: int = int(os.environ.get("UPSCALE_TILE", "256"))
     context: int = int(os.environ.get("UPSCALE_CONTEXT", "32"))
 
