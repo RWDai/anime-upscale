@@ -16,6 +16,7 @@ class Settings:
     )
     tile: int = int(os.environ.get("UPSCALE_TILE", "256"))
     context: int = int(os.environ.get("UPSCALE_CONTEXT", "32"))
+    model_ttl: int = int(os.environ.get("MODEL_TTL", "60"))
 
     @property
     def database_path(self) -> Path:

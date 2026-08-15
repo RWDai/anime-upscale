@@ -18,6 +18,7 @@ services:
       ANIMESR_MODEL_PATH: /models/AnimeSR_v2.pth
       UPSCALE_TILE: "256"
       UPSCALE_CONTEXT: "32"
+      MODEL_TTL: "60"
     ports:
       - "8787:8787"
     volumes:

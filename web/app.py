@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import logging
 import sqlite3
 import threading
 import time
@@ -29,6 +30,7 @@ MODEL_OPTIONS = {
 }
 WEB_ROOT = Path(__file__).parent
 database = Database(settings.database_path)
+logger = logging.getLogger(__name__)
 
 
 def inside(root: Path, relative: str) -> Path:
@@ -60,6 +62,7 @@ class Worker:
         self.cancel_events: dict[str, threading.Event] = {}
         self.lock = threading.Lock()
         self.current_job_id: str | None = None
+        self.last_job_finished_at: float | None = None
 
     def start(self) -> None:
         database.recover_interrupted()
@@ -73,6 +76,8 @@ class Worker:
                 event.set()
         if self.thread:
             self.thread.join(timeout=10)
+            if not self.thread.is_alive():
+                self.release_runtime("服务停止")
 
     def cancel(self, job_id: str) -> bool:
         requested = database.request_cancel(job_id)
@@ -95,11 +100,7 @@ class Worker:
             return self.runtime
         if self.runtime is not None:
             self.append_log(job_id, f"正在切换模型：{MODEL_OPTIONS[model]['label']}")
-            self.runtime = None
-            self.runtime_name = None
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            self.release_runtime("切换模型")
         runtime_class = AnimeSRRuntime if model == "animesr_v2" else StarSampleRuntime
         self.runtime = runtime_class(
             settings, lambda message: self.append_log(job_id, message)
@@ -107,14 +108,47 @@ class Worker:
         self.runtime_name = model
         return self.runtime
 
+    @property
+    def model_loaded(self) -> bool:
+        return self.runtime is not None
+
+    def release_runtime(self, reason: str) -> None:
+        if self.runtime is None:
+            return
+        runtime_name = self.runtime_name or "unknown"
+        runtime = self.runtime
+        self.runtime = None
+        self.runtime_name = None
+        self.last_job_finished_at = None
+        del runtime
+        gc.collect()
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+            except RuntimeError as error:
+                logger.warning("释放 CUDA 缓存失败（%s）：%s", reason, error)
+        logger.info("已释放模型 %s（原因：%s）", runtime_name, reason)
+
+    def release_idle_runtime(self) -> None:
+        if (
+            settings.model_ttl <= 0
+            or self.runtime is None
+            or self.last_job_finished_at is None
+            or time.monotonic() - self.last_job_finished_at < settings.model_ttl
+        ):
+            return
+        self.release_runtime(f"空闲超过 {settings.model_ttl} 秒")
+
     def loop(self) -> None:
         while not self.stop_event.is_set():
             job = database.claim_next()
             if not job:
+                self.release_idle_runtime()
                 self.stop_event.wait(1)
                 continue
             job_id = job["id"]
             cancel_event = threading.Event()
+            runtime = None
             with self.lock:
                 self.cancel_events[job_id] = cancel_event
                 self.current_job_id = job_id
@@ -142,9 +176,12 @@ class Worker:
                 self.append_log(job_id, f"失败：{error}")
                 database.finish(job_id, "failed", str(error)[:1000])
             finally:
+                runtime = None
                 with self.lock:
                     self.cancel_events.pop(job_id, None)
                     self.current_job_id = None
+                if self.runtime is not None:
+                    self.last_job_finished_at = time.monotonic()
 
 
 worker = Worker()
@@ -155,6 +192,10 @@ async def lifespan(_: FastAPI):
     settings.data_root.mkdir(parents=True, exist_ok=True)
     settings.log_root.mkdir(parents=True, exist_ok=True)
     settings.output_root.mkdir(parents=True, exist_ok=True)
+    if settings.model_ttl > 0:
+        logger.info("模型空闲卸载 TTL：%s 秒", settings.model_ttl)
+    else:
+        logger.info("模型空闲卸载已禁用（MODEL_TTL=%s）", settings.model_ttl)
     worker.start()
     yield
     worker.stop()
@@ -200,6 +241,8 @@ def status():
         ],
         "cuda_ready": torch.cuda.is_available(),
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        "model_loaded": worker.model_loaded,
+        "model_ttl_seconds": settings.model_ttl,
         "current_job_id": worker.current_job_id,
         "counts": counts,
     }
